@@ -11,27 +11,44 @@ Gestão e autoatendimento para restaurantes. HTML + CSS + JavaScript vanilla + F
 | `app.js` | Lógica, visões e Firebase (configuração no topo do arquivo) |
 | `firestore.rules` | Regras de segurança do Firestore |
 
+## Perfis e acesso
+
+O app abre sempre na **tela de login** (entrar ou criar conta).
+
+| Perfil | Entra em | Vê |
+|---|---|---|
+| **Master** | Lojas e configuração | Todas as telas. Invisível para os demais usuários |
+| **Loja (administrador)** | Admin | Cliente, Balcão, Cozinha, Admin, Reservas e Estúdio visual. Cria acessos e altera perfis (nunca para Master) |
+| **Balcão** | Balcão | Cliente, Balcão, Reservas |
+| **Cozinha** | Cozinha | Só a Cozinha |
+| **Cliente** | Cardápio | Só o cardápio. Quem cria conta nova entra como Cliente |
+
+- O cliente só consegue **fazer pedidos** lendo o QR Code da mesa (URL com `mesa` e `t`). Sem QR, vê apenas o cardápio.
+- Com um QR Code válido aparece também **Continuar sem cadastro** (acesso anônimo, sem conta).
+- A Loja cria acessos e muda perfis em **Admin > Acessos**.
+- O Master não tem registro na lista de acessos (fica em uma coleção própria, `master`), então ninguém o vê.
+
 ## Configuração do Firebase (projeto `restaurante-gns`)
 
-1. **Authentication > Sign-in method:** ative **E-mail/senha** e **Anônimo** (o cliente do QR Code usa o anônimo).
-2. **Authentication > Settings > Authorized domains:** adicione o domínio onde o app ficará (ex.: `seu-usuario.github.io`).
+1. **Authentication > Sign-in method:** ative **E-mail/senha** e **Anônimo**.
+2. **Authentication > Settings > Authorized domains:** adicione o domínio de hospedagem (ex.: `seu-usuario.github.io`).
 3. **Firestore Database > Regras:** cole o conteúdo de `firestore.rules` e publique.
-4. **Authentication > Users:** crie seu usuário (e-mail e senha) e copie o **UID**.
-5. **Firestore > Iniciar coleção:** crie `master`, com documento de ID = seu UID (pode ficar sem campos).
-6. Abra o app, toque em **Equipe**, entre com seu e-mail e senha. No primeiro acesso do Master, o app cria a loja `demo`, as mesas e o cardápio iniciais.
-7. Ajuste o cardápio e as mesas na aba **Admin** e imprima os **QR Codes** das mesas.
-
-### Equipe
-Crie cada funcionário em Authentication > Users, copie o UID e cadastre na aba **Admin > Equipe** (nome, perfil e UID).
+4. **Authentication > Users:** crie seu usuário Master (e-mail e senha) e copie o **UID**.
+5. **Firestore > Iniciar coleção:** crie `master` com um documento de ID = seu UID (sem campos).
+6. Abra o app e entre com esse e-mail. No primeiro acesso, o Master cria a loja `demo`, as mesas e o cardápio iniciais.
+7. Na aba **Admin > Acessos**, crie o usuário da Loja (perfil *Loja (administrador)*). Ele passa a gerir o restante.
 
 ### Outras lojas
-Na aba **Master**, crie a loja. Acesse com `?loja=id-da-loja`.
+Na aba **Master**, crie a loja e acesse com `?loja=id-da-loja`. Os acessos são por loja.
 
 ## Publicação no GitHub Pages
 Settings > Pages > Deploy from a branch > `main` / root. O app precisa de HTTPS (o Pages já fornece).
 
-## Observações de segurança
-- A `apiKey` do Firebase é um identificador público, não uma senha. A proteção real está nas regras do Firestore e no Authentication.
+## Modo demo (sem Firebase)
+Em `app.js`, defina `FIREBASE_CONFIG = null`. Dados ficam no navegador.
+Acessos de teste: `master@demo.com` / `master123` e `loja@demo.com` / `loja123`.
+
+## Segurança
+- A `apiKey` do Firebase é um identificador público. A proteção real está nas regras do Firestore e no Authentication.
 - Opcional: no Google Cloud Console, restrinja a chave a referenciadores HTTP do seu domínio.
-- Modo demo: defina `FIREBASE_CONFIG = null` em `app.js` (login por PIN, dados no navegador).
-- O telefone usado na fidelidade é dado pessoal (LGPD): mantenha uma política de privacidade.
+- Telefones usados na fidelidade são dados pessoais (LGPD): mantenha uma política de privacidade.

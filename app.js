@@ -29,7 +29,9 @@ let S = JSON.parse(localStorage.getItem(KEY) || 'null') || {
 };
 S.cardapio = S.cardapio || cardapio;
 const sha = async t => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))].map(b => b.toString(16).padStart(2, '0')).join('');
-S.equipe = S.equipe || [{ id: 'e0', nome: 'Master', perfil: 'master', pin: await sha('0000') }];
+S.equipe = S.equipe || [
+  { id: 'e0', nome: 'Master', email: 'master@demo.com', perfil: 'master', senha: await sha('master123') },
+  { id: 'e1', nome: 'Loja Demo', email: 'loja@demo.com', perfil: 'admin', senha: await sha('loja123') }];
 S.reservas = S.reservas || [];
 S.promocoes = S.promocoes || [{ id: 'pr0', titulo: 'Desconto de boas-vindas', cupom: 'BEMVINDO10', desconto: 10, validoAte: '2099-12-31', ativa: true }];
 S.avaliacoes = S.avaliacoes || [];
@@ -39,13 +41,14 @@ S.lojas = S.lojas || [{ id: 'demo', nome: 'Bistrô Demo', status: 'ativa' }];
 
 let db, fs, auth, au;
 let SES = JSON.parse(sessionStorage.getItem('mv_ses') || 'null');
+const GUEST = () => sessionStorage.getItem('mv_guest') === '1';
 if (FIREBASE_CONFIG) {
   const A = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js');
   fs = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
   db = fs.getFirestore(A.initializeApp(FIREBASE_CONFIG));
   au = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js'); auth = au.getAuth(A.getApp());
   await auth.authStateReady();
-  if (!auth.currentUser) { try { await au.signInAnonymously(auth); } catch (e) { console.error('Ative o provedor Anônimo em Authentication > Sign-in method.', e); } }
+  if (GUEST() && !auth.currentUser) { try { await au.signInAnonymously(auth); } catch (e) { console.error('Ative o provedor Anônimo em Authentication > Sign-in method.', e); } }
   SES = auth.currentUser && !auth.currentUser.isAnonymous ? await perfilDe(auth.currentUser.uid) : null;
   SES ? sessionStorage.setItem('mv_ses', JSON.stringify(SES)) : sessionStorage.removeItem('mv_ses');
   // produção: sem dados de demonstração; mesas iniciais com token aleatório
@@ -60,9 +63,11 @@ if (FIREBASE_CONFIG) {
   }, () => {}));
 }
 async function perfilDe(uid) {
-  if ((await fs.getDoc(fs.doc(db, 'master', uid))).exists()) return { id: uid, nome: auth.currentUser.email, perfil: 'master' };
-  const d = await fs.getDoc(fs.doc(db, 'tenants', LOJA, 'equipe', uid));
-  return d.exists() ? { id: uid, nome: d.data().nome, perfil: d.data().perfil } : null;
+  if ((await fs.getDoc(fs.doc(db, 'master', uid))).exists()) return { id: uid, nome: 'Master', perfil: 'master' };
+  const r = fs.doc(db, 'tenants', LOJA, 'equipe', uid), d = await fs.getDoc(r), u = auth.currentUser;
+  if (d.exists()) return { id: uid, nome: d.data().nome, perfil: d.data().perfil };
+  const o = { id: uid, nome: u.displayName || u.email.split('@')[0], email: u.email, perfil: 'cliente' };
+  await fs.setDoc(r, o); return { id: uid, nome: o.nome, perfil: 'cliente' };
 }
 function persist(col, o) { if (db) fs.setDoc(col === 'lojas' ? fs.doc(db, 'tenants', o.id) : fs.doc(db, 'tenants', LOJA, col, o.id), o); }
 function save(col, o) { localStorage.setItem(KEY, JSON.stringify(S)); if (col) persist(col, o); render(); }
@@ -70,27 +75,64 @@ addEventListener('storage', e => { if (e.key === KEY) { S = JSON.parse(e.newValu
 
 // ---------- estado de interface ----------
 const mesaUrl = +Q.get('mesa') || 5;
-const V = { view: Q.get('mesa') ? 'cliente' : 'cliente', mesa: 'm' + mesaUrl, pessoa: '', cat: 'Todos', layout: 'carrossel', idx: 0, cart: [], cupom: null, nota: 0 };
-const PERM = { master: ['cliente', 'balcao', 'cozinha', 'admin', 'reservas', 'master'], admin: ['cliente', 'balcao', 'cozinha', 'admin', 'reservas'], balcao: ['cliente', 'balcao', 'reservas'], cozinha: ['cozinha'] };
-const pode = v => v === 'cliente' ? !SES || PERM[SES.perfil].includes('cliente') : !!SES && PERM[SES.perfil].includes(v);
-const INICIO = { master: 'admin', admin: 'admin', balcao: 'balcao', cozinha: 'cozinha' };
-async function entrar() {
-  if (db) {
-    try {
-      const c = await au.signInWithEmailAndPassword(auth, $('#lgNome').value.trim(), $('#lgPin').value), p = await perfilDe(c.user.uid);
-      if (!p) { await au.signOut(auth); return toast('Sem acesso a esta loja'); }
-      sessionStorage.setItem('mv_ses', JSON.stringify(p)); return location.reload();
-    } catch { return toast('E-mail ou senha incorretos'); }
-  }
-  const e = S.equipe.find(x => x.id === $('#lgNome').value);
-  if (!e || e.pin !== await sha($('#lgPin').value)) return toast('PIN incorreto');
-  SES = { id: e.id, nome: e.nome, perfil: e.perfil }; sessionStorage.setItem('mv_ses', JSON.stringify(SES));
-  V.view = INICIO[e.perfil]; fecha(); render(); toast('Olá, ' + e.nome);
+const V = { view: Q.get('mesa') ? 'cliente' : 'cliente', mesa: 'm' + mesaUrl, pessoa: '', cat: 'Todos', layout: 'carrossel', idx: 0, cart: [], cupom: null, nota: 0, modoLogin: 'entrar' };
+const ROTULO = { master: 'Master', admin: 'Loja (administrador)', balcao: 'Balcão', cozinha: 'Cozinha', cliente: 'Cliente' };
+const PERM = { master: ['cliente', 'balcao', 'cozinha', 'admin', 'reservas', 'master'], admin: ['cliente', 'balcao', 'cozinha', 'admin', 'reservas'], balcao: ['cliente', 'balcao', 'reservas'], cozinha: ['cozinha'], cliente: ['cliente'] };
+const pode = v => SES ? PERM[SES.perfil].includes(v) : v === 'cliente' && GUEST();
+const INICIO = { master: 'master', admin: 'admin', balcao: 'balcao', cozinha: 'cozinha', cliente: 'cliente' };
+const ERROS = { 'auth/invalid-credential': 'E-mail ou senha incorretos', 'auth/invalid-email': 'E-mail inválido', 'auth/email-already-in-use': 'Este e-mail já está cadastrado', 'auth/weak-password': 'A senha precisa de 6 ou mais caracteres', 'auth/too-many-requests': 'Muitas tentativas. Aguarde um pouco.', 'auth/operation-not-allowed': 'Método de login desativado no Firebase' };
+const erroLogin = t => { const e = $('#lgErro'); if (e) e.textContent = t; };
+function login() {
+  const cria = V.modoLogin === 'criar', qr = !!Q.get('t');
+  return `<section class="login entra"><div class="login-card card"><div class="marca" style="justify-content:center;font-size:28px"><i></i><b>MesaViva</b></div>
+  <h1>${cria ? 'Criar conta' : 'Bem-vindo'}</h1><p class="sub">${cria ? 'Cadastre-se para ver o cardápio.' : 'Entre para continuar.'}</p>
+  <div class="chips" style="justify-content:center"><button class="chip ${cria ? '' : 'on'}" data-act="modo" data-v="entrar">Entrar</button><button class="chip ${cria ? 'on' : ''}" data-act="modo" data-v="criar">Criar conta</button></div>
+  <div class="form" style="grid-template-columns:1fr">${cria ? '<input class="txt" id="lgNome" placeholder="Seu nome" autocomplete="name">' : ''}
+  <input class="txt" id="lgEmail" type="email" placeholder="E-mail" autocomplete="email"><input class="txt" id="lgSenha" type="password" placeholder="Senha" autocomplete="${cria ? 'new-password' : 'current-password'}"></div>
+  <p id="lgErro" class="erro" role="alert"></p><button class="btn" style="width:100%" data-act="acessar">${cria ? 'Criar conta e entrar' : 'Entrar'}</button>
+  ${qr ? '<button class="btn fantasma" style="width:100%" data-act="convidado">Continuar sem cadastro</button>' : ''}</div></section>`;
+}
+async function acessar(modo) {
+  const email = $('#lgEmail').value.trim().toLowerCase(), senha = $('#lgSenha').value, nome = $('#lgNome')?.value.trim();
+  if (!email || senha.length < 6) return erroLogin('Informe e-mail e senha (mínimo 6 caracteres)');
+  if (modo === 'criar' && !nome) return erroLogin('Informe seu nome');
+  try {
+    if (db) {
+      if (modo === 'criar') { const c = await au.createUserWithEmailAndPassword(auth, email, senha); await au.updateProfile(c.user, { displayName: nome }); }
+      else await au.signInWithEmailAndPassword(auth, email, senha);
+      sessionStorage.removeItem('mv_guest'); return location.reload();
+    }
+    const sen = await sha(senha); let e;
+    if (modo === 'criar') {
+      if (S.equipe.some(x => x.email === email)) return erroLogin(ERROS['auth/email-already-in-use']);
+      S.equipe.push(e = { id: 'e' + Date.now(), nome, email, perfil: 'cliente', senha: sen }); localStorage.setItem(KEY, JSON.stringify(S));
+    } else e = S.equipe.find(x => x.email === email && x.senha === sen);
+    if (!e) return erroLogin(ERROS['auth/invalid-credential']);
+    SES = { id: e.id, nome: e.nome, perfil: e.perfil }; sessionStorage.setItem('mv_ses', JSON.stringify(SES)); sessionStorage.removeItem('mv_guest');
+    V.view = INICIO[e.perfil]; render(); toast('Olá, ' + e.nome);
+  } catch (e) { erroLogin(ERROS[e.code] || 'Não foi possível entrar. Tente novamente.'); }
+}
+async function convidado() {
+  try { if (db) await au.signInAnonymously(auth); } catch { return erroLogin('Ative o login Anônimo no Firebase.'); }
+  sessionStorage.setItem('mv_guest', '1'); db ? location.reload() : render();
 }
 async function addEquipe() {
-  const nome = $('#eNome').value.trim(), pin = $('#ePin').value;
-  if (!nome || pin.length < 4) return toast('Informe nome e PIN (mín. 4 dígitos)');
-  const o = db ? { id: pin, nome, perfil: $('#ePerfil').value } : { id: 'e' + Date.now(), nome, perfil: $('#ePerfil').value, pin: await sha(pin) }; S.equipe.push(o); save('equipe', o); toast('Membro adicionado');
+  const nome = $('#eNome').value.trim(), email = $('#eEmail').value.trim().toLowerCase(), senha = $('#eSenha').value, perfil = $('#ePerfil').value;
+  if (!nome || !email || senha.length < 6) return toast('Informe nome, e-mail e senha (mín. 6)');
+  if (perfil === 'master') return;
+  try {
+    let id;
+    if (db) { // app secundário: cria o usuário sem deslogar quem está administrando
+      const A = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js'), sec = A.initializeApp(FIREBASE_CONFIG, 'sec' + Date.now()), a2 = au.getAuth(sec);
+      id = (await au.createUserWithEmailAndPassword(a2, email, senha)).user.uid; await au.signOut(a2); await A.deleteApp(sec);
+    } else { if (S.equipe.some(x => x.email === email)) return toast(ERROS['auth/email-already-in-use']); id = 'e' + Date.now(); }
+    const o = { id, nome, email, perfil }; if (!db) o.senha = await sha(senha);
+    S.equipe.push(o); save('equipe', o); toast('Acesso criado');
+  } catch (e) { toast(ERROS[e.code] || 'Não foi possível criar o acesso'); }
+}
+function mudaPerfil(uid, perfil) {
+  const e = S.equipe.find(x => x.id === uid); if (!e || e.perfil === 'master' || perfil === 'master') return;
+  e.perfil = perfil; save('equipe', e); toast('Perfil atualizado');
 }
 const VIEWS = { cliente: 'Cliente', balcao: 'Balcão', cozinha: 'Cozinha', admin: 'Admin', reservas: 'Reservas', master: 'Master' };
 const mesaDe = id => S.mesas.find(m => m.id === id);
@@ -102,21 +144,22 @@ const toast = t => { const e = $('#toast'); e.textContent = t; e.classList.add('
 function cliente() {
   const m = mesaDe(V.mesa) || S.mesas[0], tk = Q.get('t'), lj = S.lojas.find(l => l.id === LOJA);
   if (lj && lj.status === 'suspensa') return `<div class="card entra"><h2>Loja indisponível</h2><p class="sub">Este estabelecimento está temporariamente suspenso.</p></div>`;
-  if ((tk || (db && !SES)) && tk !== m.token) return `<div class="card entra"><h2>Mesa não validada</h2><p class="sub">Leia novamente o QR Code da sua mesa.</p></div>`;
+  if (tk && tk !== m.token) return `<div class="card entra"><h2>Mesa não validada</h2><p class="sub">Leia novamente o QR Code da sua mesa.</p></div>`;
   const cats = ['Todos', ...new Set(S.cardapio.map(p => p.categoria))];
   const lista = S.cardapio.filter(p => V.cat === 'Todos' || p.categoria === V.cat);
   V.idx = Math.min(V.idx, lista.length - 1);
-  const card = (p, i) => `<article class="prato card ${p.disponivel ? '' : 'esg'}" tabindex="0" data-act="add" data-id="${p.id}" style="--o:${i - V.idx};--a:${Math.abs(i - V.idx)}">
-    <div class="foto">${p.foto ? `<img src="${p.foto}" alt="">` : p.emoji}</div><h3>${p.nome}</h3><span class="preco">${p.disponivel ? R(p.preco) : 'Esgotado'}</span>${p.adicionais?.length ? '<br><small class="sub">personalizável</small>' : ''}<span class="mais">+</span></article>`;
+  const podePedir = (SES && SES.perfil !== 'cliente') || (!!tk && tk === m.token);
+  const card = (p, i) => `<article class="prato card ${p.disponivel ? '' : 'esg'}" tabindex="0" data-act="${podePedir ? 'add' : 'foco'}" data-id="${p.id}" style="--o:${i - V.idx};--a:${Math.abs(i - V.idx)}">
+    <div class="foto">${p.foto ? `<img src="${p.foto}" alt="">` : p.emoji}</div><h3>${p.nome}</h3><span class="preco">${p.disponivel ? R(p.preco) : 'Esgotado'}</span>${p.adicionais?.length ? '<br><small class="sub">personalizável</small>' : ''}${podePedir ? '<span class="mais">+</span>' : ''}</article>`;
   const n = V.cart.reduce((a, i) => a + i.qtd, 0), tot = V.cart.reduce((a, i) => a + i.qtd * i.preco, 0);
-  return `<section class="hero entra"><h1>Mesa ${m.numero}.<br>O que vai pedir?</h1>
-    <input class="txt" id="pessoa" placeholder="Seu nome (para dividir a conta)" value="${V.pessoa}" style="max-width:340px"></section>
+  return `<section class="hero entra"><h1>${podePedir ? `Mesa ${m.numero}.<br>O que vai pedir?` : 'Nosso cardápio'}</h1>
+    ${podePedir ? `<input class="txt" id="pessoa" placeholder="Seu nome (para dividir a conta)" value="${V.pessoa}" style="max-width:340px">` : '<p class="sub">Para fazer pedidos, leia o QR Code da sua mesa.</p>'}</section>
     <div class="chips">${cats.map(c => `<button class="chip ${c === V.cat ? 'on' : ''}" data-act="cat" data-v="${c}">${c}</button>`).join('')}</div>
     <div class="chips">${['carrossel', 'grade', 'lista'].map(l => `<button class="chip ${l === V.layout ? 'on' : ''}" data-act="layout" data-v="${l}">${l}</button>`).join('')}</div>
     <div class="entra ${V.layout}" id="vitrine" style="margin-top:14px">${lista.map(card).join('')}</div>
     ${V.layout === 'carrossel' ? `<div class="carrossel-nav"><button class="btn fantasma" data-act="prev" aria-label="Anterior">←</button><button class="btn fantasma" data-act="next" aria-label="Próximo">→</button></div>` : ''}
-    <div class="barra"><button class="btn sac" data-act="garcom">Chamar garçom</button><button class="btn sac" data-act="conta">Pedir conta</button>
-    <button class="btn" data-act="carrinho" ${n ? '' : 'disabled style="opacity:.5"'}>Pedido <span class="badge">${n}</span> ${n ? R(tot) : ''}</button></div>`;
+    ${podePedir ? `<div class="barra"><button class="btn sac" data-act="garcom">Chamar garçom</button><button class="btn sac" data-act="conta">Pedir conta</button>
+    <button class="btn" data-act="carrinho" ${n ? '' : 'disabled style="opacity:.5"'}>Pedido <span class="badge">${n}</span> ${n ? R(tot) : ''}</button></div>` : ''}`;
 }
 const porPessoa = itens => itens.reduce((o, i) => ((o[i.pessoa] = o[i.pessoa] || []).push(i), o), {});
 function blocoPessoas(itens) {
@@ -161,9 +204,11 @@ function admin() {
   <input class="txt" id="nPreco" type="number" min="0" step="0.01" placeholder="Preço"><input class="txt" id="nEmoji" placeholder="Emoji (opcional)" maxlength="4">
   <input class="txt" id="nAd" placeholder="Adicionais: Queijo:5, Bacon:7"><input class="txt" id="pFoto" type="file" accept="image/*"><button class="btn" data-act="prodAdd">Adicionar ao cardápio</button></div>
   ${S.cardapio.map(p => `<div class="card linha"><span>${p.foto ? `<img src="${p.foto}" alt="" style="width:36px;height:36px;border-radius:8px;object-fit:cover;vertical-align:middle">` : p.emoji} <b>${p.nome}</b> · ${R(p.preco)}</span><button class="btn fantasma" data-act="prodDel" data-id="${p.id}">Remover</button></div>`).join('')}
-  <h2>Equipe</h2><div class="card form"><input class="txt" id="eNome" placeholder="Nome"><select class="txt" id="ePerfil"><option value="admin">Gerente</option><option value="balcao">Balcão</option><option value="cozinha">Cozinha</option></select>
-  <input class="txt" id="ePin" ${db ? 'placeholder="UID do usuário (Firebase Auth)"' : 'type="password" inputmode="numeric" placeholder="PIN"'}><button class="btn" data-act="equipeAdd">Adicionar</button></div>
-  ${S.equipe.map(e => `<div class="card linha"><span><b>${e.nome}</b> · ${e.perfil}</span>${e.perfil === 'master' ? '' : `<button class="btn fantasma" data-act="equipeDel" data-id="${e.id}">Remover</button>`}</div>`).join('')}
+  <h2>Acessos</h2><div class="card form"><input class="txt" id="eNome" placeholder="Nome"><input class="txt" id="eEmail" type="email" placeholder="E-mail"><input class="txt" id="eSenha" type="password" placeholder="Senha (mín. 6)">
+  <select class="txt" id="ePerfil">${Object.entries(ROTULO).filter(([k]) => k !== 'master').map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select><button class="btn" data-act="equipeAdd">Criar acesso</button></div>
+  ${S.equipe.filter(e => e.perfil !== 'master').map(e => `<div class="card linha"><span><b>${e.nome}</b><br><small class="sub">${e.email || ''}</small></span><span style="display:flex;gap:8px;align-items:center">
+  <select class="txt" data-uid="${e.id}" ${e.id === SES?.id ? 'disabled' : ''}>${Object.entries(ROTULO).filter(([k]) => k !== 'master').map(([k, v]) => `<option value="${k}" ${e.perfil === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+  ${e.id === SES?.id ? '' : `<button class="btn fantasma" data-act="equipeDel" data-id="${e.id}">Remover</button>`}</span></div>`).join('')}
   <h2>Promoções</h2><div class="card form"><input class="txt" id="pTit" placeholder="Título"><input class="txt" id="pCup" placeholder="CUPOM"><input class="txt" id="pDes" type="number" min="1" max="100" placeholder="% desconto"><input class="txt" id="pVal" type="date"><button class="btn" data-act="promoAdd">Criar promoção</button></div>
   ${S.promocoes.map(p => `<div class="card linha"><span><b>${p.titulo}</b> · ${p.cupom} · ${p.desconto}% · até ${p.validoAte}</span><button class="btn fantasma" data-act="promoDel" data-id="${p.id}">Remover</button></div>`).join('')}
   <h2>Avaliações ${S.avaliacoes.length ? '· média ' + (S.avaliacoes.reduce((a, x) => a + x.nota, 0) / S.avaliacoes.length).toFixed(1) + ' ★' : ''}</h2>
@@ -183,7 +228,7 @@ function reservas() {
   <button class="btn fantasma" data-act="cancelaRes" data-id="${r.id}">Cancelar</button></div>`).join('') || '<p class="sub">Nenhuma reserva ainda.</p>'}`;
 }
 function master() {
-  return `<section class="hero entra"><h1>Lojas</h1><p class="sub">Crie, suspenda ou reative estabelecimentos.</p></section>
+  return `<section class="hero entra"><h1>Lojas</h1><p class="sub">Crie, suspenda ou reative estabelecimentos.</p><div><button class="btn" data-act="estudio">Abrir estúdio visual</button></div></section>
   <div class="card form entra"><input class="txt" id="lNome" placeholder="Nome da nova loja"><button class="btn" data-act="lojaNova">Criar loja</button></div>
   <div class="kds" style="margin-top:16px">${S.lojas.map(l => `<div class="card entra"><h2 style="margin:0">${l.nome}</h2>
   <p class="sub">${l.status === 'ativa' ? '● Ativa' : '○ Suspensa'} · <a style="color:var(--brand)" href="?loja=${l.id}&mesa=5">abrir cardápio</a></p>
@@ -193,10 +238,17 @@ const VIEW_FN = { cliente, balcao, cozinha, admin, reservas, master };
 
 // ---------- render ----------
 function render() {
-  if (!pode(V.view)) V.view = SES ? INICIO[SES.perfil] : 'cliente';
-  $('#btnEstudio').style.display = SES && ['master', 'admin'].includes(SES.perfil) ? '' : 'none';
-  $('#btnLogin').textContent = SES ? 'Sair (' + SES.nome + ')' : 'Equipe';
-  $('#nav').style.display = SES ? '' : 'none';
+  const fora = !SES && !GUEST();
+  $('#btnLogin').style.display = fora ? 'none' : ''; $('#btnLogin').textContent = SES ? 'Sair (' + SES.nome + ')' : 'Sair';
+  $('#btnEstudio').style.display = !fora && SES && ['master', 'admin'].includes(SES.perfil) ? '' : 'none';
+  if (fora) {
+    $('#nav').style.display = 'none';
+    if ($('#app').dataset.tela !== 'login' + V.modoLogin) { $('#app').dataset.tela = 'login' + V.modoLogin; $('#app').innerHTML = login(); }
+    return;
+  }
+  $('#app').dataset.tela = '';
+  if (!pode(V.view)) V.view = INICIO[SES?.perfil] || 'cliente';
+  $('#nav').style.display = Object.keys(VIEWS).filter(pode).length > 1 ? '' : 'none';
   $('#nav').innerHTML = Object.entries(VIEWS).filter(([k]) => pode(k)).map(([k, v]) => `<button class="${k === V.view ? 'on' : ''}" data-act="view" data-v="${k}">${v}</button>`).join('');
   const foco = document.activeElement?.id, val = $('#pessoa')?.value;
   const rolagem = scrollY;
@@ -365,7 +417,11 @@ document.addEventListener('click', e => {
     const o = { id: 'pr' + Date.now(), titulo: t, cupom: c, desconto: d, validoAte: val, ativa: true }; S.promocoes.push(o); save('promocoes', o); toast('Promoção criada');
   }
   else if (act === 'promoDel') { S.promocoes = S.promocoes.filter(x => x.id !== id); if (db) fs.deleteDoc(fs.doc(db, 'tenants', LOJA, 'promocoes', id)); save(); toast('Removida'); }
-  else if (act === 'entrar') entrar();
+  else if (act === 'modo') { V.modoLogin = v; render(); }
+  else if (act === 'acessar') acessar(V.modoLogin);
+  else if (act === 'convidado') convidado();
+  else if (act === 'foco') { V.idx = [...document.querySelectorAll('#vitrine .prato')].indexOf(b); pos(); }
+  else if (act === 'estudio') $('#estudio').classList.add('on');
   else if (act === 'equipeAdd') addEquipe();
   else if (act === 'equipeDel') { S.equipe = S.equipe.filter(x => x.id !== id); if (db) fs.deleteDoc(fs.doc(db, 'tenants', LOJA, 'equipe', id)); save(); toast('Removido'); }
   else if (act === 'disp') { const p = S.cardapio.find(x => x.id === id); p.disponivel = !p.disponivel; save('cardapio', p); }
@@ -392,9 +448,10 @@ document.addEventListener('pointermove', e => {
   c.style.transform = `perspective(700px) rotateY(${px * 14}deg) rotateX(${-py * 14}deg) translateY(-4px)`;
 });
 document.addEventListener('pointerout', e => { const c = e.target.closest('.prato'); if (c && !c.closest('.carrossel')) c.style.transform = ''; });
-document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.classList.contains('prato')) e.target.click(); if (e.key === 'Escape') { fecha(); $('#estudio').classList.remove('on'); } });
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id?.startsWith('lg')) acessar(V.modoLogin); if (e.key === 'Enter' && e.target.classList.contains('prato')) e.target.click(); if (e.key === 'Escape') { fecha(); $('#estudio').classList.remove('on'); } });
 
 document.addEventListener('change', async e => {
+  if (e.target.matches?.('select[data-uid]')) return mudaPerfil(e.target.dataset.uid, e.target.value);
   if (e.target.id === 'pFoto' && e.target.files[0]) { V.fotoTmp = await reduzir(e.target.files[0]); toast('Foto pronta'); }
 });
 // ---------- estúdio de tema ----------
@@ -413,12 +470,12 @@ function aplica() {
 }
 $('#estudio').addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (!b) return; PREF[b.dataset.k] = b.dataset.v; salvaTema(); aplica(); render(); });
 $('#corMarca').addEventListener('input', e => { PREF.marca = e.target.value; salvaTema(); aplica(); });
-$('#btnLogin').onclick = () => {
-  if (SES && db) { sessionStorage.removeItem('mv_ses'); au.signOut(auth).then(() => location.reload()); return; }
-  if (SES) { SES = null; sessionStorage.removeItem('mv_ses'); V.view = 'cliente'; return render(); }
-  folha(`<h2>Entrar na equipe</h2><div class="form">${db ? '<input class="txt" id="lgNome" type="email" placeholder="E-mail">' : `<select class="txt" id="lgNome">${S.equipe.map(e => `<option value="${e.id}">${e.nome} (${e.perfil})</option>`).join('')}</select>`}
-  <input class="txt" id="lgPin" type="password" ${db ? '' : 'inputmode="numeric"'} placeholder="${db ? 'Senha' : 'PIN'}"></div><br><button class="btn" style="width:100%" data-act="entrar">Entrar</button>`);
+$('#btnLogin').onclick = async () => {
+  sessionStorage.removeItem('mv_ses'); sessionStorage.removeItem('mv_guest');
+  if (db) { await au.signOut(auth); return location.reload(); }
+  SES = null; V.view = 'cliente'; render();
 };
 $('#btnEstudio').onclick = () => $('#estudio').classList.toggle('on');
+if (SES) V.view = INICIO[SES.perfil];
 aplica(); render();
 setInterval(() => V.view === 'cozinha' && render(), 30000);

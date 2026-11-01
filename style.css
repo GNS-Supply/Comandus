@@ -103,3 +103,7 @@ input[type=number].txt{appearance:textfield}
 .conf{position:fixed;top:70%;width:10px;height:16px;border-radius:2px;z-index:70;pointer-events:none;animation:conf 1.4s var(--ease) forwards}
 @keyframes conf{to{transform:translate(var(--x),var(--y)) rotate(var(--g));opacity:0}}
 @media print{body>*:not(.folha){display:none!important}body::before{display:none}.folha{position:static;transform:none;border:0;max-height:none}.folha .btn{display:none}}
+
+.login{min-height:calc(100dvh - 150px);display:grid;place-items:center}
+.login-card{width:min(420px,100%);display:grid;gap:14px;padding:30px 24px;text-align:center}
+.login-card h1{font-size:34px}.erro{color:var(--ocupada);min-height:1.2em;font-size:13px;font-weight:700}

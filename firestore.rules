@@ -34,9 +34,14 @@ service cloud.firestore {
       match /config/{id} { allow read: if true; allow write: if gerente(l); }
       match /clientes/{id} { allow read, write: if operacao(l); }
       match /reservas/{id} { allow read, write: if operacao(l); }
+      // Cadastro livre: qualquer pessoa cria o PRÓPRIO acesso, sempre como 'cliente'.
+      // Só a Loja (admin) ou o Master criam outros acessos e mudam perfis, nunca para 'master'.
+      // O Master não tem documento aqui (fica em /master), por isso é invisível para a equipe.
       match /equipe/{uid} {
         allow read: if logado() && (request.auth.uid == uid || gerente(l));
-        allow write: if gerente(l);
+        allow create: if logado() && request.auth.uid == uid && request.resource.data.perfil == 'cliente';
+        allow create, update: if gerente(l) && request.resource.data.perfil in ['admin', 'balcao', 'cozinha', 'cliente'];
+        allow delete: if gerente(l);
       }
     }
   }
