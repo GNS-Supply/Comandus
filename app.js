@@ -1,6 +1,12 @@
 /* MesaViva — JS Vanilla + Firebase Firestore (opcional).
    Sem FIREBASE_CONFIG o app roda em modo demo (localStorage, sincroniza entre abas).
    URL: index.html?loja=demo&mesa=5&t=token */
+const VERSAO = 'v3';
+let BOOT_ERRO = null;
+const banner = t => { const b = document.createElement('div'); b.className = 'banner-erro'; b.textContent = t; b.onclick = () => b.remove(); document.body.append(b); };
+addEventListener('error', e => banner('Erro: ' + e.message));
+addEventListener('unhandledrejection', e => banner('Erro: ' + (e.reason?.code || e.reason?.message || e.reason)));
+
 const FIREBASE_CONFIG = {
   apiKey: 'AIzaSyALkf1xjwp1dSoHjyTa6VSpRyAB3jzkDZU',
   authDomain: 'restaurante-gns.firebaseapp.com',
@@ -42,7 +48,7 @@ S.lojas = S.lojas || [{ id: 'demo', nome: 'Bistrô Demo', status: 'ativa' }];
 let db, fs, auth, au;
 let SES = JSON.parse(sessionStorage.getItem('mv_ses') || 'null');
 const GUEST = () => sessionStorage.getItem('mv_guest') === '1';
-if (FIREBASE_CONFIG) {
+if (FIREBASE_CONFIG) try {
   const A = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js');
   fs = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
   db = fs.getFirestore(A.initializeApp(FIREBASE_CONFIG));
@@ -58,10 +64,10 @@ if (FIREBASE_CONFIG) {
   fs.onSnapshot(fs.doc(db, 'tenants', LOJA, 'config', 'fidelidade'), d => { if (d.exists()) { S.fidelidade = d.data(); render(); } }, () => {});
   fs.onSnapshot(fs.collection(db, 'tenants'), s => { if (!s.empty) { S.lojas = s.docs.map(d => ({ id: d.id, ...d.data() })); render(); } else if (SES?.perfil === 'master') S.lojas.forEach(o => persist('lojas', o)); }, () => {});
   ['mesas', 'comandas', 'cardapio', 'reservas', 'promocoes', 'avaliacoes', 'clientes', 'equipe'].filter(c => c === 'equipe' ? ['master', 'admin'].includes(SES?.perfil) : c === 'clientes' ? !!SES : true).forEach(c => fs.onSnapshot(fs.collection(db, 'tenants', LOJA, c), s => {
-    if (s.empty) { if (SES && ['mesas', 'cardapio'].includes(c)) S[c].forEach(o => persist(c, o)); } else S[c] = s.docs.map(d => d.data());
+    if (s.empty) { if (['master', 'admin'].includes(SES?.perfil) && ['mesas', 'cardapio'].includes(c)) S[c].forEach(o => persist(c, o)); } else S[c] = s.docs.map(d => d.data());
     render();
   }, () => {}));
-}
+} catch (e) { BOOT_ERRO = e; SES = null; console.error(e); }
 async function perfilDe(uid) {
   if ((await fs.getDoc(fs.doc(db, 'master', uid))).exists()) return { id: uid, nome: 'Master', perfil: 'master' };
   const r = fs.doc(db, 'tenants', LOJA, 'equipe', uid), d = await fs.getDoc(r), u = auth.currentUser;
@@ -90,7 +96,7 @@ function login() {
   <div class="form" style="grid-template-columns:1fr">${cria ? '<input class="txt" id="lgNome" placeholder="Seu nome" autocomplete="name">' : ''}
   <input class="txt" id="lgEmail" type="email" placeholder="E-mail" autocomplete="email"><input class="txt" id="lgSenha" type="password" placeholder="Senha" autocomplete="${cria ? 'new-password' : 'current-password'}"></div>
   <p id="lgErro" class="erro" role="alert"></p><button class="btn" style="width:100%" data-act="acessar">${cria ? 'Criar conta e entrar' : 'Entrar'}</button>
-  ${qr ? '<button class="btn fantasma" style="width:100%" data-act="convidado">Continuar sem cadastro</button>' : ''}</div></section>`;
+  ${qr ? '<button class="btn fantasma" style="width:100%" data-act="convidado">Continuar sem cadastro</button>' : ''}<small class="sub">${VERSAO}</small></div></section>`;
 }
 async function acessar(modo) {
   const email = $('#lgEmail').value.trim().toLowerCase(), senha = $('#lgSenha').value, nome = $('#lgNome')?.value.trim();
@@ -238,6 +244,14 @@ const VIEW_FN = { cliente, balcao, cozinha, admin, reservas, master };
 
 // ---------- render ----------
 function render() {
+  if (BOOT_ERRO) {
+    $('#nav').style.display = 'none'; $('#btnEstudio').style.display = 'none'; $('#btnLogin').style.display = ''; $('#btnLogin').textContent = 'Sair';
+    const perm = BOOT_ERRO.code === 'permission-denied';
+    $('#app').innerHTML = `<section class="login"><div class="login-card card"><h1>Não foi possível entrar</h1>
+    <p class="sub">${perm ? 'O Firestore negou a leitura do seu perfil. Publique o arquivo <b>firestore.rules</b> na aba Regras do projeto <b>restaurante-gns</b> e confirme que o documento <b>master/SEU-UID</b> existe.' : 'Falha ao iniciar o Firebase.'}</p>
+    <p class="erro">${BOOT_ERRO.code || BOOT_ERRO.message}</p><button class="btn" data-act="recarregar">Tentar novamente</button><button class="btn fantasma" data-act="sairErro">Sair</button></div></section>`;
+    return;
+  }
   const fora = !SES && !GUEST();
   $('#btnLogin').style.display = fora ? 'none' : ''; $('#btnLogin').textContent = SES ? 'Sair (' + SES.nome + ')' : 'Sair';
   $('#btnEstudio').style.display = !fora && SES && ['master', 'admin'].includes(SES.perfil) ? '' : 'none';
@@ -417,6 +431,8 @@ document.addEventListener('click', e => {
     const o = { id: 'pr' + Date.now(), titulo: t, cupom: c, desconto: d, validoAte: val, ativa: true }; S.promocoes.push(o); save('promocoes', o); toast('Promoção criada');
   }
   else if (act === 'promoDel') { S.promocoes = S.promocoes.filter(x => x.id !== id); if (db) fs.deleteDoc(fs.doc(db, 'tenants', LOJA, 'promocoes', id)); save(); toast('Removida'); }
+  else if (act === 'recarregar') location.reload();
+  else if (act === 'sairErro') $('#btnLogin').click();
   else if (act === 'modo') { V.modoLogin = v; render(); }
   else if (act === 'acessar') acessar(V.modoLogin);
   else if (act === 'convidado') convidado();
@@ -472,7 +488,7 @@ $('#estudio').addEventListener('click', e => { const b = e.target.closest('[data
 $('#corMarca').addEventListener('input', e => { PREF.marca = e.target.value; salvaTema(); aplica(); });
 $('#btnLogin').onclick = async () => {
   sessionStorage.removeItem('mv_ses'); sessionStorage.removeItem('mv_guest');
-  if (db) { await au.signOut(auth); return location.reload(); }
+  if (db && auth) { try { await au.signOut(auth); } catch {} return location.reload(); }
   SES = null; V.view = 'cliente'; render();
 };
 $('#btnEstudio').onclick = () => $('#estudio').classList.toggle('on');
