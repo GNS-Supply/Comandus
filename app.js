@@ -1,8 +1,9 @@
 /* MesaViva — JS Vanilla + Firebase Firestore (opcional).
    Sem FIREBASE_CONFIG o app roda em modo demo (localStorage, sincroniza entre abas).
    URL: index.html?loja=demo&mesa=5&t=token */
-const VERSAO = 'v3';
+const VERSAO = 'v4';
 let BOOT_ERRO = null;
+const CARGA = {};
 const banner = t => { const b = document.createElement('div'); b.className = 'banner-erro'; b.textContent = t; b.onclick = () => b.remove(); document.body.append(b); };
 addEventListener('error', e => banner('Erro: ' + e.message));
 addEventListener('unhandledrejection', e => banner('Erro: ' + (e.reason?.code || e.reason?.message || e.reason)));
@@ -60,13 +61,13 @@ if (FIREBASE_CONFIG) try {
   // produção: sem dados de demonstração; mesas iniciais com token aleatório
   Object.assign(S, { comandas: [], equipe: [], reservas: [], promocoes: [], avaliacoes: [], clientes: [] });
   S.mesas.forEach(m => m.token = crypto.randomUUID().slice(0, 8));
-  fs.onSnapshot(fs.doc(db, 'tenants', LOJA, 'config', 'tema'), d => { if (d.exists()) { const { id, ...p } = d.data(); Object.assign(PREF, p); aplica(); render(); } }, () => {});
+  fs.onSnapshot(fs.doc(db, 'tenants', LOJA, 'config', 'tema'), d => { if (d.exists()) { const { id, ...p } = d.data(); Object.keys(PREF).forEach(k => delete PREF[k]); Object.assign(PREF, p); aplica(); render(); } }, () => {});
   fs.onSnapshot(fs.doc(db, 'tenants', LOJA, 'config', 'fidelidade'), d => { if (d.exists()) { S.fidelidade = d.data(); render(); } }, () => {});
   fs.onSnapshot(fs.collection(db, 'tenants'), s => { if (!s.empty) { S.lojas = s.docs.map(d => ({ id: d.id, ...d.data() })); render(); } else if (SES?.perfil === 'master') S.lojas.forEach(o => persist('lojas', o)); }, () => {});
   ['mesas', 'comandas', 'cardapio', 'reservas', 'promocoes', 'avaliacoes', 'clientes', 'equipe'].filter(c => c === 'equipe' ? ['master', 'admin'].includes(SES?.perfil) : c === 'clientes' ? !!SES : true).forEach(c => fs.onSnapshot(fs.collection(db, 'tenants', LOJA, c), s => {
     if (s.empty) { if (['master', 'admin'].includes(SES?.perfil) && ['mesas', 'cardapio'].includes(c)) S[c].forEach(o => persist(c, o)); } else S[c] = s.docs.map(d => d.data());
-    render();
-  }, () => {}));
+    CARGA[c] = true; render();
+  }, () => { CARGA[c] = true; render(); }));
 } catch (e) { BOOT_ERRO = e; SES = null; console.error(e); }
 async function perfilDe(uid) {
   if ((await fs.getDoc(fs.doc(db, 'master', uid))).exists()) return { id: uid, nome: 'Master', perfil: 'master' };
@@ -83,14 +84,14 @@ addEventListener('storage', e => { if (e.key === KEY) { S = JSON.parse(e.newValu
 const mesaUrl = +Q.get('mesa') || 5;
 const V = { view: Q.get('mesa') ? 'cliente' : 'cliente', mesa: 'm' + mesaUrl, pessoa: '', cat: 'Todos', layout: 'carrossel', idx: 0, cart: [], cupom: null, nota: 0, modoLogin: 'entrar' };
 const ROTULO = { master: 'Master', admin: 'Loja (administrador)', balcao: 'Balcão', cozinha: 'Cozinha', cliente: 'Cliente' };
-const PERM = { master: ['cliente', 'balcao', 'cozinha', 'admin', 'reservas', 'master'], admin: ['cliente', 'balcao', 'cozinha', 'admin', 'reservas'], balcao: ['cliente', 'balcao', 'reservas'], cozinha: ['cozinha'], cliente: ['cliente'] };
+const PERM = { master: ['cliente', 'balcao', 'cozinha', 'admin', 'reservas', 'master', 'aparencia'], admin: ['cliente', 'balcao', 'cozinha', 'admin', 'reservas'], balcao: ['cliente', 'balcao', 'reservas'], cozinha: ['cozinha'], cliente: ['cliente'] };
 const pode = v => SES ? PERM[SES.perfil].includes(v) : v === 'cliente' && GUEST();
 const INICIO = { master: 'master', admin: 'admin', balcao: 'balcao', cozinha: 'cozinha', cliente: 'cliente' };
 const ERROS = { 'auth/invalid-credential': 'E-mail ou senha incorretos', 'auth/invalid-email': 'E-mail inválido', 'auth/email-already-in-use': 'Este e-mail já está cadastrado', 'auth/weak-password': 'A senha precisa de 6 ou mais caracteres', 'auth/too-many-requests': 'Muitas tentativas. Aguarde um pouco.', 'auth/operation-not-allowed': 'Método de login desativado no Firebase' };
 const erroLogin = t => { const e = $('#lgErro'); if (e) e.textContent = t; };
 function login() {
   const cria = V.modoLogin === 'criar', qr = !!Q.get('t');
-  return `<section class="login entra"><div class="login-card card"><div class="marca" style="justify-content:center;font-size:28px"><i></i><b>MesaViva</b></div>
+  return `<section class="login entra"><div class="emojis" aria-hidden="true">${['🍝', '🍕', '🥗', '🍰', '🍹', '🍣', '🥩', '🍋'].map((e, i) => `<span style="--x:${4 + i * 12.5}%;--t:${13 + i * 2.5}s;--d:${-i * 2.2}s;--r:${(i % 2 ? 1 : -1) * 40}deg">${e}</span>`).join('')}</div><div class="login-card card"><div class="marca" style="justify-content:center;font-size:28px"><i></i><b>MesaViva</b></div>
   <h1>${cria ? 'Criar conta' : 'Bem-vindo'}</h1><p class="sub">${cria ? 'Cadastre-se para ver o cardápio.' : 'Entre para continuar.'}</p>
   <div class="chips" style="justify-content:center"><button class="chip ${cria ? '' : 'on'}" data-act="modo" data-v="entrar">Entrar</button><button class="chip ${cria ? 'on' : ''}" data-act="modo" data-v="criar">Criar conta</button></div>
   <div class="form" style="grid-template-columns:1fr">${cria ? '<input class="txt" id="lgNome" placeholder="Seu nome" autocomplete="name">' : ''}
@@ -140,7 +141,7 @@ function mudaPerfil(uid, perfil) {
   const e = S.equipe.find(x => x.id === uid); if (!e || e.perfil === 'master' || perfil === 'master') return;
   e.perfil = perfil; save('equipe', e); toast('Perfil atualizado');
 }
-const VIEWS = { cliente: 'Cliente', balcao: 'Balcão', cozinha: 'Cozinha', admin: 'Admin', reservas: 'Reservas', master: 'Master' };
+const VIEWS = { cliente: 'Cliente', balcao: 'Balcão', cozinha: 'Cozinha', admin: 'Admin', reservas: 'Reservas', master: 'Master', aparencia: 'Aparência' };
 const mesaDe = id => S.mesas.find(m => m.id === id);
 const aberta = id => S.comandas.find(c => c.mesaId === id && c.status === 'aberta');
 const totalC = c => c.itens.reduce((a, i) => a + i.preco * i.qtd, 0) * (1 - (c.desconto || 0) / 100);
@@ -150,6 +151,7 @@ const toast = t => { const e = $('#toast'); e.textContent = t; e.classList.add('
 function cliente() {
   const m = mesaDe(V.mesa) || S.mesas[0], tk = Q.get('t'), lj = S.lojas.find(l => l.id === LOJA);
   if (lj && lj.status === 'suspensa') return `<div class="card entra"><h2>Loja indisponível</h2><p class="sub">Este estabelecimento está temporariamente suspenso.</p></div>`;
+  if (db && tk && !CARGA.mesas) return '<section class="hero"><h1>Carregando…</h1></section>';
   if (tk && tk !== m.token) return `<div class="card entra"><h2>Mesa não validada</h2><p class="sub">Leia novamente o QR Code da sua mesa.</p></div>`;
   const cats = ['Todos', ...new Set(S.cardapio.map(p => p.categoria))];
   const lista = S.cardapio.filter(p => V.cat === 'Todos' || p.categoria === V.cat);
@@ -164,8 +166,24 @@ function cliente() {
     <div class="chips">${['carrossel', 'grade', 'lista'].map(l => `<button class="chip ${l === V.layout ? 'on' : ''}" data-act="layout" data-v="${l}">${l}</button>`).join('')}</div>
     <div class="entra ${V.layout}" id="vitrine" style="margin-top:14px">${lista.map(card).join('')}</div>
     ${V.layout === 'carrossel' ? `<div class="carrossel-nav"><button class="btn fantasma" data-act="prev" aria-label="Anterior">←</button><button class="btn fantasma" data-act="next" aria-label="Próximo">→</button></div>` : ''}
-    ${podePedir ? `<div class="barra"><button class="btn sac" data-act="garcom">Chamar garçom</button><button class="btn sac" data-act="conta">Pedir conta</button>
-    <button class="btn" data-act="carrinho" ${n ? '' : 'disabled style="opacity:.5"'}>Pedido <span class="badge">${n}</span> ${n ? R(tot) : ''}</button></div>` : ''}`;
+    ${podePedir ? `<div class="barra">${barraInner()}</div>` : ''}`;
+}
+function barraInner() {
+  const n = V.cart.reduce((a, i) => a + i.qtd, 0), tot = V.cart.reduce((a, i) => a + i.qtd * i.preco, 0);
+  return `<button class="btn sac" data-act="garcom">Chamar garçom</button><button class="btn sac" data-act="conta">Pedir conta</button>
+    <button class="btn" data-act="carrinho" ${n ? '' : 'disabled style="opacity:.5"'}>Pedido <span class="badge">${n}</span> ${n ? R(tot) : ''}</button>`;
+}
+function voa(el, p) {
+  const b = $('.barra .badge'); if (!el || !b || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+  const r = el.getBoundingClientRect(), t = b.getBoundingClientRect(), c = document.createElement('div'); c.className = 'voa'; c.textContent = p.emoji || '🍽️';
+  c.style.cssText = `left:${r.left + r.width / 2}px;top:${r.top + r.height / 2}px`; document.body.append(c);
+  const an = c.animate?.([{ transform: 'translate(-50%,-50%) scale(1.2)' }, { transform: `translate(calc(-50% + ${t.left - r.left - r.width / 2}px),calc(-50% + ${t.top - r.top - r.height / 2}px)) scale(.3)`, opacity: .5 }], { duration: 650, easing: 'cubic-bezier(.5,-.2,.6,1)' });
+  if (!an) return c.remove();
+  an.onfinish = () => { c.remove(); $('.barra .badge')?.animate?.([{ transform: 'scale(1.7)' }, { transform: 'scale(1)' }], { duration: 350, easing: 'cubic-bezier(.2,.8,.2,1)' }); };
+}
+function atualizaBarra(p) {
+  const b = $('.barra'); if (!b) return render();
+  b.innerHTML = barraInner(); navigator.vibrate?.(15); voa(document.querySelector(`#vitrine [data-id="${p.id}"]`), p);
 }
 const porPessoa = itens => itens.reduce((o, i) => ((o[i.pessoa] = o[i.pessoa] || []).push(i), o), {});
 function blocoPessoas(itens) {
@@ -189,7 +207,7 @@ function cozinha() {
   const np = itens.filter(i => i.status === 'pendente').length; if (prevPend >= 0 && np > prevPend) bip(); prevPend = np;
   const col = (s, t) => `<div class="col"><h2>${t}</h2>${itens.filter(i => i.status === s).sort((a, b) => a.t - b.t).map(i => {
     const min = Math.floor((Date.now() - i.t) / 6e4);
-    return `<div class="card ficha entra ${min > 15 ? 'atraso' : ''}" data-act="avanca" data-c="${i.c.id}" data-k="${i.k}"><b>Mesa ${i.mesa} · ${i.qtd}× ${i.nome}</b><br><small>${i.pessoa} · há ${min} min</small></div>`; }).join('') || '<p class="sub">Nada aqui.</p>'}</div>`;
+    return `<div class="card ficha entra ${min > 15 ? 'atraso' : ''}" data-act="avanca" data-c="${i.c.id}" data-k="${i.k}"><b>Mesa ${i.mesa} · ${i.qtd}× ${i.nome}</b><br><small>${i.pessoa} · há ${min} min</small><i class="tempo" style="--p:${Math.min(100, min / 20 * 100)}%;--cor:${min < 8 ? 'var(--livre)' : min < 15 ? 'var(--conta)' : 'var(--ocupada)'}"></i></div>`; }).join('') || '<p class="sub">Nada aqui.</p>'}</div>`;
   return `<section class="hero entra"><h1>Cozinha</h1><p class="sub">Toque na ficha para avançar o status.</p></section>
   <div class="kds">${col('pendente', 'Pendente')}${col('preparo', 'Em preparo')}${col('pronto', 'Pronto para servir')}</div>`;
 }
@@ -234,18 +252,19 @@ function reservas() {
   <button class="btn fantasma" data-act="cancelaRes" data-id="${r.id}">Cancelar</button></div>`).join('') || '<p class="sub">Nenhuma reserva ainda.</p>'}`;
 }
 function master() {
-  return `<section class="hero entra"><h1>Lojas</h1><p class="sub">Crie, suspenda ou reative estabelecimentos.</p><div><button class="btn" data-act="estudio">Abrir estúdio visual</button></div></section>
+  return `<section class="hero entra"><h1>Lojas</h1><p class="sub">Crie, suspenda ou reative estabelecimentos.</p><div><button class="btn" data-act="estudio">Personalizar aparência</button></div></section>
   <div class="card form entra"><input class="txt" id="lNome" placeholder="Nome da nova loja"><button class="btn" data-act="lojaNova">Criar loja</button></div>
   <div class="kds" style="margin-top:16px">${S.lojas.map(l => `<div class="card entra"><h2 style="margin:0">${l.nome}</h2>
   <p class="sub">${l.status === 'ativa' ? '● Ativa' : '○ Suspensa'} · <a style="color:var(--brand)" href="?loja=${l.id}&mesa=5">abrir cardápio</a></p>
   <button class="btn ${l.status === 'ativa' ? 'fantasma' : ''}" data-act="lojaStatus" data-id="${l.id}">${l.status === 'ativa' ? 'Suspender' : 'Reativar'}</button></div>`).join('')}</div>`;
 }
-const VIEW_FN = { cliente, balcao, cozinha, admin, reservas, master };
+const VIEW_FN = { cliente, balcao, cozinha, admin, reservas, master, aparencia };
 
 // ---------- render ----------
+let ULTIMA = null, PEND = false;
 function render() {
   if (BOOT_ERRO) {
-    $('#nav').style.display = 'none'; $('#btnEstudio').style.display = 'none'; $('#btnLogin').style.display = ''; $('#btnLogin').textContent = 'Sair';
+    $('#nav').style.display = 'none'; $('#btnLogin').style.display = ''; $('#btnLogin').textContent = 'Sair';
     const perm = BOOT_ERRO.code === 'permission-denied';
     $('#app').innerHTML = `<section class="login"><div class="login-card card"><h1>Não foi possível entrar</h1>
     <p class="sub">${perm ? 'O Firestore negou a leitura do seu perfil. Publique o arquivo <b>firestore.rules</b> na aba Regras do projeto <b>restaurante-gns</b> e confirme que o documento <b>master/SEU-UID</b> existe.' : 'Falha ao iniciar o Firebase.'}</p>
@@ -254,20 +273,27 @@ function render() {
   }
   const fora = !SES && !GUEST();
   $('#btnLogin').style.display = fora ? 'none' : ''; $('#btnLogin').textContent = SES ? 'Sair (' + SES.nome + ')' : 'Sair';
-  $('#btnEstudio').style.display = !fora && SES && ['master', 'admin'].includes(SES.perfil) ? '' : 'none';
   if (fora) {
     $('#nav').style.display = 'none';
-    if ($('#app').dataset.tela !== 'login' + V.modoLogin) { $('#app').dataset.tela = 'login' + V.modoLogin; $('#app').innerHTML = login(); }
+    ULTIMA = null;
+    if ($('#app').dataset.tela !== 'login' + V.modoLogin) { $('#app').dataset.tela = 'login' + V.modoLogin; $('#app').classList.add('novo'); $('#app').innerHTML = login(); }
     return;
   }
   $('#app').dataset.tela = '';
   if (!pode(V.view)) V.view = INICIO[SES?.perfil] || 'cliente';
   $('#nav').style.display = Object.keys(VIEWS).filter(pode).length > 1 ? '' : 'none';
   $('#nav').innerHTML = Object.entries(VIEWS).filter(([k]) => pode(k)).map(([k, v]) => `<button class="${k === V.view ? 'on' : ''}" data-act="view" data-v="${k}">${v}</button>`).join('');
+  const ae = document.activeElement;
+  if (ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName) && $('#app').contains(ae) && ae.id !== 'pessoa' && V.view === ULTIMA) { PEND = true; return; }
+  const nova = V.view !== ULTIMA; ULTIMA = V.view; $('#app').classList.toggle('novo', nova);
   const foco = document.activeElement?.id, val = $('#pessoa')?.value;
   const rolagem = scrollY;
   $('#app').innerHTML = VIEW_FN[V.view]();
-  if (V.view === 'cliente' && V.layout === 'carrossel') pos();
+  if ($('#vitrine.carrossel')) pos();
+  if (nova) {
+    document.querySelectorAll('#app .grade>.prato,#app .lista>.prato,#app .mapa>.mesa,#app .kds .ficha,#app .kpis>.card').forEach((e, i) => e.style.setProperty('--i', i));
+    clearTimeout(render.t); render.t = setTimeout(() => $('#app').classList.remove('novo'), 1300);
+  }
   scrollTo(0, rolagem);
   if (foco === 'pessoa') { const e = $('#pessoa'); e.focus(); e.setSelectionRange(val.length, val.length); }
   document.querySelectorAll('[data-n]').forEach(el => {
@@ -275,6 +301,7 @@ function render() {
       el.textContent = el.dataset.m ? R(v) : Math.round(v); if (k < 1) requestAnimationFrame(p); })(t0);
   });
 }
+document.addEventListener('focusout', () => { if (PEND) { PEND = false; setTimeout(render, 60); } });
 function folha(html) { $('#folha').innerHTML = html; $('#folha').classList.add('on'); $('#veu').classList.add('on'); }
 function fecha() { $('#folha').classList.remove('on'); $('#veu').classList.remove('on'); }
 document.body.insertAdjacentHTML('beforeend', '<div id="veu" class="veu"></div><div id="folha" class="folha"></div>');
@@ -335,7 +362,7 @@ function colocar(p, extras = [], obs = '') {
   const pessoa = ($('#pessoa')?.value || '').trim() || 'Mesa'; V.pessoa = $('#pessoa')?.value || '';
   const nome = p.nome + (extras.length ? ' + ' + extras.map(e => e.nome).join(', ') : '') + (obs ? ` (${obs})` : ''), preco = p.preco + extras.reduce((a, e) => a + e.preco, 0);
   const ex = V.cart.find(i => i.nome === nome && i.pessoa === pessoa);
-  ex ? ex.qtd++ : V.cart.push({ id: p.id, base: p.nome, nome, preco, qtd: 1, pessoa }); toast('+ ' + p.nome); render();
+  ex ? ex.qtd++ : V.cart.push({ id: p.id, base: p.nome, nome, preco, qtd: 1, pessoa }); toast('+ ' + p.nome); atualizaBarra(p);
 }
 function abrirOpcoes(p) {
   folha(`<h2>${p.nome}</h2><p class="sub">Personalize do seu jeito.</p>${p.adicionais.map((a, i) => `<label class="linha"><span><input type="checkbox" class="ad" value="${i}"> ${a.nome}</span><b>+ ${R(a.preco)}</b></label>`).join('')}
@@ -345,7 +372,7 @@ function abrirOpcoes(p) {
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const { act, id, v } = b.dataset, m = mesaDe(V.mesa);
-  if (act === 'view') { V.view = v; prevPend = -1; render(); }
+  if (act === 'view') { const go = () => { V.view = v; prevPend = -1; render(); }; document.startViewTransition ? document.startViewTransition(go) : go(); }
   else if (act === 'cat') { V.cat = v; V.idx = 0; render(); }
   else if (act === 'layout') { V.layout = v; render(); }
   else if (act === 'prev' || act === 'next') { V.idx += act === 'next' ? 1 : -1; V.idx = Math.max(0, Math.min(document.querySelectorAll('#vitrine .prato').length - 1, V.idx)); pos(); }
@@ -437,7 +464,14 @@ document.addEventListener('click', e => {
   else if (act === 'acessar') acessar(V.modoLogin);
   else if (act === 'convidado') convidado();
   else if (act === 'foco') { V.idx = [...document.querySelectorAll('#vitrine .prato')].indexOf(b); pos(); }
-  else if (act === 'estudio') $('#estudio').classList.add('on');
+  else if (act === 'estudio') { V.view = 'aparencia'; render(); }
+  else if (act === 'pref') { PREF[b.dataset.k] = v; salvaTema(); aplica(); render(); }
+  else if (act === 'publicar') { persist('config', { id: 'tema', ...PREF }); toast('Aparência publicada na loja ✨'); confete(); }
+  else if (act === 'resetTema') {
+    Object.keys(PREF).forEach(k => delete PREF[k]);
+    Object.entries({ tema: 'noite', forma: 'suave', moldura: 'arco', textura: 'grade' }).forEach(([a, d]) => H.setAttribute('data-' + a, d));
+    V.layout = 'carrossel'; salvaTema(); aplica(); render(); toast('Padrão restaurado. Publique para aplicar na loja.');
+  }
   else if (act === 'equipeAdd') addEquipe();
   else if (act === 'equipeDel') { S.equipe = S.equipe.filter(x => x.id !== id); if (db) fs.deleteDoc(fs.doc(db, 'tenants', LOJA, 'equipe', id)); save(); toast('Removido'); }
   else if (act === 'disp') { const p = S.cardapio.find(x => x.id === id); p.disponivel = !p.disponivel; save('cardapio', p); }
@@ -447,7 +481,7 @@ document.addEventListener('click', e => {
 function pos() {
   document.querySelectorAll('#vitrine .prato').forEach((c, i) => {
     const a = Math.abs(i - V.idx); c.style.setProperty('--o', i - V.idx); c.style.setProperty('--a', a);
-    c.style.visibility = a > 2 ? 'hidden' : 'visible'; c.style.pointerEvents = a > 2 ? 'none' : '';
+    c.classList.toggle('ativo', a === 0); c.style.visibility = a > 2 ? 'hidden' : 'visible'; c.style.pointerEvents = a > 2 ? 'none' : '';
   });
 }
 // deslizar no carrossel
@@ -463,35 +497,72 @@ document.addEventListener('pointermove', e => {
   const r = c.getBoundingClientRect(), px = (e.clientX - r.left) / r.width - .5, py = (e.clientY - r.top) / r.height - .5;
   c.style.transform = `perspective(700px) rotateY(${px * 14}deg) rotateX(${-py * 14}deg) translateY(-4px)`;
 });
+let raf = 0;
+document.addEventListener('pointermove', e => {
+  const t = e.target.closest?.('.card,.btn'); if (t) { const r = t.getBoundingClientRect(); t.style.setProperty('--mx', (e.clientX - r.left) + 'px'); t.style.setProperty('--my', (e.clientY - r.top) + 'px'); }
+  if (!raf) raf = requestAnimationFrame(() => { raf = 0; const a = $('.aurora'); a.style.setProperty('--px', (e.clientX / innerWidth - .5).toFixed(3)); a.style.setProperty('--py', (e.clientY / innerHeight - .5).toFixed(3)); });
+});
 document.addEventListener('pointerout', e => { const c = e.target.closest('.prato'); if (c && !c.closest('.carrossel')) c.style.transform = ''; });
-document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id?.startsWith('lg')) acessar(V.modoLogin); if (e.key === 'Enter' && e.target.classList.contains('prato')) e.target.click(); if (e.key === 'Escape') { fecha(); $('#estudio').classList.remove('on'); } });
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id?.startsWith('lg')) acessar(V.modoLogin); if (e.key === 'Enter' && e.target.classList.contains('prato')) e.target.click(); if (e.key === 'Escape') fecha(); });
 
 document.addEventListener('change', async e => {
   if (e.target.matches?.('select[data-uid]')) return mudaPerfil(e.target.dataset.uid, e.target.value);
+  if (e.target.dataset?.fonte) { PREF[e.target.dataset.fonte] = e.target.value; salvaTema(); aplica(); return; }
   if (e.target.id === 'pFoto' && e.target.files[0]) { V.fotoTmp = await reduzir(e.target.files[0]); toast('Foto pronta'); }
 });
-// ---------- estúdio de tema ----------
-const OPTS = { Tema: ['noite', 'claro', 'argila', 'nevoa'], Forma: ['reta', 'suave', 'redonda', 'capsula'], Moldura: ['arco', 'circulo', 'retrato', 'polaroid'], Textura: ['grade', 'pontos', 'linhas', 'losangos', 'hachura', 'nenhuma'], Layout: ['carrossel', 'grade', 'lista'] };
-const PREF = JSON.parse(localStorage.getItem('mv_tema') || '{}'), H = document.documentElement;
+// ---------- aparência (Master) ----------
+const OPTS = { Forma: ['reta', 'suave', 'redonda', 'capsula'], Moldura: ['arco', 'circulo', 'retrato', 'polaroid'], Textura: ['grade', 'pontos', 'linhas', 'losangos', 'hachura', 'nenhuma'], Layout: ['carrossel', 'grade', 'lista'], Aurora: ['ligada', 'desligada'] };
+const PRESETS = { noite: ['#17101f', '#ffb547'], claro: ['#f7f5fb', '#d9822b'], argila: ['#2a1d18', '#e07a5f'], nevoa: ['#dfe7ee', '#3a7ca5'], custom: ['#0b1220', '#22d3ee'] };
+const FONTES_T = ['Fraunces', 'Playfair Display', 'DM Serif Display', 'Bricolage Grotesque', 'Space Grotesk', 'Cormorant Garamond'], FONTES_X = ['Manrope', 'Inter', 'DM Sans', 'Outfit', 'Nunito'];
+const PREF = (SES?.perfil === 'master' || !db) ? JSON.parse(localStorage.getItem('mv_tema') || '{}') : {}, H = document.documentElement;
 const ATTR = { Tema: 'tema', Forma: 'forma', Moldura: 'moldura', Textura: 'textura' };
-const salvaTema = () => {
-  localStorage.setItem('mv_tema', JSON.stringify(PREF));
-  if (db && SES && ['master', 'admin'].includes(SES.perfil)) persist('config', { id: 'tema', ...PREF });
-};
+const salvaTema = () => localStorage.setItem('mv_tema', JSON.stringify(PREF));
+const atual = k => PREF[k] || ({ Aurora: 'ligada' })[k] || (ATTR[k] ? H.getAttribute('data-' + ATTR[k]) : k === 'Layout' ? V.layout : '');
+const carregaFonte = n => { if (!n || document.getElementById('f-' + n)) return; const l = document.createElement('link'); l.id = 'f-' + n; l.rel = 'stylesheet'; l.href = 'https://fonts.googleapis.com/css2?family=' + n.replace(/ /g, '+') + ':wght@400;600;800&display=swap'; document.head.append(l); };
 function aplica() {
   Object.entries(ATTR).forEach(([k, a]) => PREF[k] && H.setAttribute('data-' + a, PREF[k]));
-  if (PREF.marca) H.style.setProperty('--brand', PREF.marca);
+  const set = (v, val) => val ? H.style.setProperty(v, val) : H.style.removeProperty(v), custom = PREF.Tema === 'custom';
+  set('--brand', PREF.marca); set('--brand2', PREF.marca2);
+  set('--bg', custom && (PREF.cBg || '#0b1220')); set('--sf', custom && (PREF.cSf || '#16203a')); set('--tx', custom && (PREF.cTx || '#eaf2ff'));
+  set('--sf2', custom && 'color-mix(in srgb, var(--sf) 82%, var(--tx))'); set('--mu', custom && 'color-mix(in srgb, var(--tx) 62%, var(--bg))'); set('--ln', custom && 'color-mix(in srgb, var(--tx) 16%, transparent)');
+  set('--tex', PREF.texInt != null && String(PREF.texInt));
+  [['fTit', '--f1', 'serif'], ['fTxt', '--f2', 'system-ui,sans-serif']].forEach(([k, v, fb]) => { if (PREF[k]) { carregaFonte(PREF[k]); H.style.setProperty(v, `"${PREF[k]}",${fb}`); } else H.style.removeProperty(v); });
+  H.dataset.aurora = PREF.Aurora === 'desligada' ? 'off' : 'on';
   if (PREF.Layout) V.layout = PREF.Layout;
-  Object.entries(OPTS).forEach(([k, vs]) => { const el = $('#opt' + k); if (el) el.innerHTML = vs.map(v => `<button class="${(PREF[k] || H.getAttribute('data-' + ATTR[k]) || V.layout) === v ? 'on' : ''}" data-k="${k}" data-v="${v}">${v}</button>`).join(''); });
 }
-$('#estudio').addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (!b) return; PREF[b.dataset.k] = b.dataset.v; salvaTema(); aplica(); render(); });
-$('#corMarca').addEventListener('input', e => { PREF.marca = e.target.value; salvaTema(); aplica(); });
+document.addEventListener('input', e => {
+  const k = e.target.dataset?.pref; if (!k) return;
+  PREF[k] = e.target.type === 'range' ? +e.target.value : e.target.value; salvaTema(); aplica();
+  const c = e.target.closest('.cor')?.querySelector('code'); if (c) c.textContent = e.target.value;
+});
+function aparencia() {
+  const lj = S.lojas.find(l => l.id === LOJA), lay = atual('Layout');
+  const opt = (k, vs) => `<div class="chips" style="flex-wrap:wrap">${vs.map(v => `<button class="chip ${atual(k) === v ? 'on' : ''}" data-act="pref" data-k="${k}" data-v="${v}">${v}</button>`).join('')}</div>`;
+  const cor = (k, rot, def) => `<label class="cor"><span>${rot}</span><span style="display:flex;gap:8px;align-items:center"><code>${PREF[k] || def}</code><input type="color" data-pref="${k}" value="${PREF[k] || def}"></span></label>`;
+  const amostra = S.cardapio.slice(0, 4).map((p, i) => `<article class="prato card" data-act="foco" data-id="${p.id}" style="--o:${i - V.idx};--a:${Math.abs(i - V.idx)}"><div class="foto">${p.foto ? `<img src="${p.foto}" alt="">` : p.emoji}</div><h3>${p.nome}</h3><span class="preco">${R(p.preco)}</span><span class="mais">+</span></article>`).join('');
+  return `<section class="hero entra"><h1>Aparência</h1><p class="sub">Loja: <b>${lj?.nome || LOJA}</b>. As mudanças aparecem na hora para você; clique em Publicar para valerem para os clientes.</p>
+  <div class="chips">${S.lojas.map(l => `<a class="chip ${l.id === LOJA ? 'on' : ''}" href="?loja=${l.id}">${l.nome}</a>`).join('')}</div></section>
+  <div class="ap"><div class="card">
+   <div class="bloco"><b>Tema</b><div class="sw">${Object.entries(PRESETS).map(([k, [bg, br]]) => `<button class="${atual('Tema') === k ? 'on' : ''}" data-act="pref" data-k="Tema" data-v="${k}"><i style="background:linear-gradient(135deg,${bg} 55%,${br} 55%)"></i><span>${k === 'custom' ? 'personalizado' : k}</span></button>`).join('')}</div></div>
+   <div class="bloco"><b>Cores</b>${cor('marca', 'Cor principal', '#ffb547')}${cor('marca2', 'Cor de destaque', '#ff5d8f')}${atual('Tema') === 'custom' ? cor('cBg', 'Fundo', '#0b1220') + cor('cSf', 'Cartões', '#16203a') + cor('cTx', 'Texto', '#eaf2ff') : '<small class="sub">Escolha o tema "personalizado" para editar fundo, cartões e texto.</small>'}</div>
+   <div class="bloco"><b>Fontes (títulos e texto)</b><div class="form"><select class="txt" data-fonte="fTit">${FONTES_T.map(f => `<option ${(PREF.fTit || 'Fraunces') === f ? 'selected' : ''}>${f}</option>`).join('')}</select><select class="txt" data-fonte="fTxt">${FONTES_X.map(f => `<option ${(PREF.fTxt || 'Manrope') === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div></div>
+   <div class="bloco"><b>Formato de botões e cartões</b>${opt('Forma', OPTS.Forma)}</div>
+   <div class="bloco"><b>Moldura das fotos</b>${opt('Moldura', OPTS.Moldura)}</div>
+   <div class="bloco"><b>Textura do fundo</b>${opt('Textura', OPTS.Textura)}<label class="cor"><span>Intensidade</span><input type="range" min="0" max="1" step=".05" value="${PREF.texInt ?? .5}" data-pref="texInt"></label></div>
+   <div class="bloco"><b>Layout do cardápio</b>${opt('Layout', OPTS.Layout)}</div>
+   <div class="bloco"><b>Aurora animada de fundo</b>${opt('Aurora', OPTS.Aurora)}</div>
+   <div class="chips"><button class="btn" data-act="publicar">Publicar na loja</button><button class="btn fantasma" data-act="resetTema">Restaurar padrão</button></div>
+  </div>
+  <div class="ap-prev"><div class="card" style="overflow:hidden"><b class="sub">Pré-visualização do cardápio</b><div class="chips"><span class="chip on">Pratos</span><span class="chip">Bebidas</span><span class="chip">Sobremesas</span></div>
+   <div class="${lay}" id="vitrine" style="margin-top:10px">${amostra}</div>
+   ${lay === 'carrossel' ? '<div class="carrossel-nav"><button class="btn fantasma" data-act="prev">←</button><button class="btn fantasma" data-act="next">→</button></div>' : ''}
+   <button class="btn" style="width:100%;margin-top:14px">Botão de exemplo</button></div></div></div>`;
+}
 $('#btnLogin').onclick = async () => {
   sessionStorage.removeItem('mv_ses'); sessionStorage.removeItem('mv_guest');
   if (db && auth) { try { await au.signOut(auth); } catch {} return location.reload(); }
   SES = null; V.view = 'cliente'; render();
 };
-$('#btnEstudio').onclick = () => $('#estudio').classList.toggle('on');
 if (SES) V.view = INICIO[SES.perfil];
 aplica(); render();
 setInterval(() => V.view === 'cozinha' && render(), 30000);

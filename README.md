@@ -17,8 +17,8 @@ O app abre sempre na **tela de login** (entrar ou criar conta).
 
 | Perfil | Entra em | Vê |
 |---|---|---|
-| **Master** | Lojas e configuração | Todas as telas. Invisível para os demais usuários |
-| **Loja (administrador)** | Admin | Cliente, Balcão, Cozinha, Admin, Reservas e Estúdio visual. Cria acessos e altera perfis (nunca para Master) |
+| **Master** | Lojas e configuração | Todas as telas, incluindo **Aparência** (personalização visual da loja). Invisível para os demais usuários |
+| **Loja (administrador)** | Admin | Cliente, Balcão, Cozinha, Admin e Reservas. Cria acessos e altera perfis (nunca para Master) |
 | **Balcão** | Balcão | Cliente, Balcão, Reservas |
 | **Cozinha** | Cozinha | Só a Cozinha |
 | **Cliente** | Cardápio | Só o cardápio. Quem cria conta nova entra como Cliente |
@@ -27,6 +27,9 @@ O app abre sempre na **tela de login** (entrar ou criar conta).
 - Com um QR Code válido aparece também **Continuar sem cadastro** (acesso anônimo, sem conta).
 - A Loja cria acessos e muda perfis em **Admin > Acessos**.
 - O Master não tem registro na lista de acessos (fica em uma coleção própria, `master`), então ninguém o vê.
+
+## Aparência (somente Master)
+Aba **Aparência**: tema (4 prontos + personalizado), cores, fontes, formato de botões e cartões, moldura das fotos, textura do fundo (com intensidade), layout do cardápio (carrossel 3D, grade, lista) e aurora animada. Tudo aparece ao vivo, com pré-visualização do cardápio. **Publicar na loja** grava a aparência no Firestore (`tenants/{loja}/config/tema`) e todos os clientes passam a ver o visual escolhido. Cada loja tem a sua.
 
 ## Configuração do Firebase (projeto `restaurante-gns`)
 
